@@ -1,0 +1,18 @@
+{
+  "name": "advent2022",
+  "version": "0.0.1",
+  "description": "Solutions for Advent of Code 2022 (https://adventofcode.com/2022/)",
+  "main": "index.js",
+  "scripts": {
+    "--comment--": "Run day 1 with (e.g.) 'npm start 1'",
+    "start": "ts-node --project tsconfig.json ./src/runner.ts run",
+    "test": "ts-node --project tsconfig.json ./src/runner.ts test"
+  },
+  "author": "Jacob Raihle",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@types/node": "^18.11.11",
+    "ts-node": "^10.9.1",
+    "typescript": "^4.9.3"
+  }
+}
