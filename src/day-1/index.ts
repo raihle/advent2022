@@ -1,11 +1,29 @@
 import { chunkList } from "../utils/chunk-list";
 import { max } from "../utils/max";
-import { readInput } from "../utils/read-input";
 import { sum } from "../utils/sum";
 
 type Elf = number[];
 
-export async function main(input: string[]) {
+export function test() {
+  main([
+    "1000",
+    "2000",
+    "3000",
+    "",
+    "4000",
+    "",
+    "5000",
+    "6000",
+    "",
+    "7000",
+    "8000",
+    "9000",
+    "",
+    "10000",
+  ]);
+}
+
+export function main(input: string[]) {
   const elves: Elf[] = chunkList(input, (item) => item == "").map((carried) =>
     carried.map(Number)
   );
