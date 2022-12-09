@@ -1,4 +1,6 @@
 import { chunkList } from "../utils/chunk-list";
+import { repeat } from "../utils/repeat";
+import { last } from "../utils/last";
 
 type Instruction = { count: number; from: number; to: number };
 type Stack = string[];
@@ -71,14 +73,4 @@ function applyB(instructions: Instruction[], stacks: Stack[]) {
     repeat(count, () => crane.push(stacks[from].pop()));
     repeat(count, () => stacks[to].push(crane.pop()));
   }
-}
-
-function repeat(n: number, fn: (time: number) => void) {
-  for (let i = 0; i < n; i++) {
-    fn(i);
-  }
-}
-
-function last<T>(list: T[]): T {
-  return list[list.length - 1];
 }
