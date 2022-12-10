@@ -1,4 +1,3 @@
-import { last } from "../utils/last";
 import { repeat } from "../utils/repeat";
 
 export async function test() {
@@ -6,58 +5,73 @@ export async function test() {
 }
 
 export async function main(input: string[]) {
-  const rope = new Rope();
-  const visited = moveRope(rope, input);
-  console.log("A: ", visited.size);
+  const visitedA = simulateChain(2, input);
+  const visitedB = simulateChain(10, input);
+  console.log("A: ", visitedA.size);
+  console.log("B: ", visitedB.size);
 }
 
-function moveRope(rope: Rope, instructions: string[]) {
+function simulateChain(length: number, instructions: string[]) {
+  const tail = new Knot();
+  let t = tail;
+  let h = tail;
+  for (let i = 1; i < length; i++) {
+    h = new Knot(t);
+    t = h;
+  }
+  const head = h;
+
   const visitedPositions = new Set<string>();
   instructions.forEach((instruction) => {
     const [direction, count] = instruction.split(" ");
     repeat(Number(count), () => {
-      rope.moveHead(direction as Direction);
-      visitedPositions.add(JSON.stringify(rope.tailPosition()));
+      switch (direction) {
+        case "U":
+          head.move(0, -1);
+          break;
+        case "D":
+          head.move(0, 1);
+          break;
+        case "L":
+          head.move(-1, 0);
+          break;
+        case "R":
+          head.move(1, 0);
+          break;
+        default:
+          throw new Error(`Unknown direction ${direction}`);
+      }
+      visitedPositions.add(JSON.stringify(tail.position()));
     });
   });
   return visitedPositions;
 }
 
-type Direction = "R" | "U" | "L" | "D";
 type Position = { x: number; y: number };
-class Rope {
-  private head: Position;
-  private tail: Position;
+class Knot {
+  private x: number;
+  private y: number;
+  private follower: Knot;
 
-  constructor() {
-    this.head = { x: 0, y: 0 };
-    this.tail = { x: 0, y: 0 };
+  constructor(follower?: Knot) {
+    this.x = 0;
+    this.y = 0;
+    this.follower = follower;
   }
 
-  moveHead(direction: Direction) {
-    switch (direction) {
-      case "U":
-        this.head.y--;
-        break;
-      case "D":
-        this.head.y++;
-        break;
-      case "L":
-        this.head.x--;
-        break;
-      case "R":
-        this.head.x++;
-        break;
-    }
-    const xDelta = this.head.x - this.tail.x;
-    const yDelta = this.head.y - this.tail.y;
-    if (Math.abs(xDelta) >= 2 || Math.abs(yDelta) >= 2) {
-      this.tail.x += Math.sign(xDelta);
-      this.tail.y += Math.sign(yDelta);
+  move(x: number, y: number) {
+    this.x += x;
+    this.y += y;
+    if (this.follower) {
+      const xDelta = this.x - this.follower.x;
+      const yDelta = this.y - this.follower.y;
+      if (Math.abs(xDelta) >= 2 || Math.abs(yDelta) >= 2) {
+        this.follower.move(Math.sign(xDelta), Math.sign(yDelta));
+      }
     }
   }
 
-  tailPosition(): Position {
-    return this.tail;
+  position(): Position {
+    return { x: this.x, y: this.y };
   }
 }
