@@ -64,9 +64,9 @@ export async function main(input: string[]) {
     turnsRemaining: 26,
   };
   network.forEach((valve, name) => {
+    // "Cheat" by deleting useless valves - we navigate using the distance map anyways
     if (valve.flowRate == 0) {
-      startA.opened.add(name);
-      startB.opened.add(name);
+      network.delete(name);
     }
   });
   console.log("A: ", simulateGame(network, shortestDistances, startA, []));
