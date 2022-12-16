@@ -1,13 +1,31 @@
-import { Position } from "../day-12/types";
+import { combinations } from "../utils/combinations";
 import { mapBy } from "../utils/mapBy";
 import { max } from "../utils/max";
-import { Range, Ranges } from "../utils/range";
 
 type Valve = {
   name: string;
   flowRate: number;
   tunnels: string[];
 };
+
+type OpenValves = Set<string>;
+
+type Network = Map<string, Valve>;
+
+type DistanceMap = Map<string, Map<string, number>>;
+
+type ActorPosition = {
+  to: string;
+  turnsLeft: number;
+};
+
+type GameState = {
+  actors: ActorPosition[];
+  opened: OpenValves;
+  released: number;
+  turnsRemaining: number;
+};
+
 const VALVE_REGEX =
   /Valve (\w{2}) has flow rate=(\d+); tunnels? leads? to valves? (.+)/;
 
@@ -27,9 +45,176 @@ export async function test() {
 }
 
 export async function main(input: string[]) {
-  const network = mapBy("name", input.map(parseValve));
-  console.log(network);
-  console.log("A: ", pressureReleasePlanA(network, 30));
+  const network: Network = mapBy("name", input.map(parseValve));
+  const shortestDistances = mapShortestDistances(network);
+
+  const startA: GameState = {
+    actors: [{ to: "AA", turnsLeft: 0 }],
+    opened: new Set(),
+    released: 0,
+    turnsRemaining: 30,
+  };
+  const startB: GameState = {
+    actors: [
+      { to: "AA", turnsLeft: 0 },
+      { to: "AA", turnsLeft: 0 },
+    ],
+    opened: new Set(),
+    released: 0,
+    turnsRemaining: 26,
+  };
+  network.forEach((valve, name) => {
+    if (valve.flowRate == 0) {
+      startA.opened.add(name);
+      startB.opened.add(name);
+    }
+  });
+  console.log("A: ", simulateGame(network, shortestDistances, startA, []));
+  console.log("B: ", simulateGame(network, shortestDistances, startB, []));
+}
+
+function simulateGame(
+  network: Network,
+  distances: DistanceMap,
+  state: GameState,
+  knownStates: GameState[]
+) {
+  if (state.turnsRemaining == 0) {
+    return state.released;
+  }
+  if (state.turnsRemaining == 25) {
+    // Print a status update when we start a new "big" branch
+    // The update is mainly useful at initialTurns - 1,
+    // so set it to 29 for A and 25 for B.
+    console.log(
+      "%s | Target: %s | States: %d",
+      new Date(),
+      state.actors.map(({ to }) => to).join("/"),
+      knownStates.length
+    );
+  }
+  const actorMoves = state.actors.map((a) =>
+    movesForActor(network, state, distances, a)
+  );
+  return max(
+    combinations(actorMoves)
+      .filter((moves, _, allMoves) => {
+        // Don't make identical moves unless there are no other options
+        const uniqueTargets = new Set(moves.map(({ to }) => to));
+        return uniqueTargets.size == moves.length || allMoves.length == 1;
+      })
+      .map((moves) => {
+        let nextOpened = state.opened;
+        const valvesToOpen = moves
+          .filter(({ turnsLeft }) => turnsLeft == 0)
+          .map(({ to }) => to);
+        if (valvesToOpen.length > 0) {
+          nextOpened = new Set([...state.opened, ...valvesToOpen]);
+        }
+        const tentativeState: GameState = {
+          turnsRemaining: state.turnsRemaining - 1,
+          released: state.released + currentFlowRate(network, state),
+          opened: nextOpened,
+          actors: moves,
+        };
+        for (let i = 0; i < knownStates.length; i++) {
+          const oldState = knownStates[i];
+          if (compareStates(network, oldState, tentativeState)) {
+            // No point in continuing this branch, there's a better one
+            return 0;
+          }
+        }
+        const toPrune = [];
+        for (let i = 0; i < knownStates.length; i++) {
+          const oldState = knownStates[i];
+          if (compareStates(network, tentativeState, oldState)) {
+            // Number of states can exceed the max array size if we don't prune them
+            toPrune.push(i - toPrune.length);
+          }
+        }
+        toPrune.forEach((p) => knownStates.splice(p, 1));
+        knownStates.push(tentativeState);
+        return simulateGame(network, distances, tentativeState, knownStates);
+      })
+  );
+}
+
+function currentFlowRate(network: Network, state: GameState) {
+  let flowRate = 0;
+  for (const openValve of state.opened) {
+    flowRate += network.get(openValve).flowRate;
+  }
+  return flowRate;
+}
+
+function movesForActor(
+  network: Network,
+  state: GameState,
+  distances: DistanceMap,
+  actor: ActorPosition
+): ActorPosition[] {
+  if (actor.turnsLeft > 0) {
+    // Keep moving to current target
+    return [{ to: actor.to, turnsLeft: actor.turnsLeft - 1 }];
+  } else {
+    // Find a new target (or open the last target)
+    const moves = subtract(network.keys(), state.opened).map((target) => ({
+      to: target,
+      turnsLeft: distances.get(actor.to).get(target),
+    }));
+    if (moves.length == 0) {
+      // If there's nothing to open, wait for the rest of the game
+      return [
+        {
+          to: actor.to,
+          turnsLeft: Infinity,
+        },
+      ];
+    }
+    return moves;
+  }
+}
+
+function subtract<T>(from: IterableIterator<T>, subtractor: Set<T>): T[] {
+  const result = [];
+  for (const t of from) {
+    if (!subtractor.has(t)) {
+      result.push(t);
+    }
+  }
+  return result;
+}
+
+/**
+ * Return true if a is definitely better or equal to b
+ * False negatives make the simulation run slower but will still yield correct results
+ */
+function compareStates(network: Network, a: GameState, b: GameState) {
+  if (a.turnsRemaining < b.turnsRemaining) {
+    return false;
+  }
+  if (a.released < b.released) {
+    return false;
+  }
+  if (!equivalentOrBetterActors(a, b)) {
+    return false;
+  }
+  if (currentFlowRate(network, a) < currentFlowRate(network, b)) {
+    return false;
+  }
+  return true;
+}
+
+function equivalentOrBetterActors(a: GameState, b: GameState) {
+  for (const ba of b.actors) {
+    const equivalentOrBetter = a.actors.find(
+      (aa) => aa.to == ba.to && aa.turnsLeft <= ba.turnsLeft
+    );
+    if (equivalentOrBetter == undefined) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function parseValve(line: string): Valve {
@@ -41,318 +226,30 @@ function parseValve(line: string): Valve {
   };
 }
 
-type Benchmark = { released: number; remaining: number };
-function pressureReleasePlanA(
-  network: Map<string, Valve>,
-  minutes: number
-): number {
-  const start = network.get("AA");
-  const active = new Map<string, boolean>();
-  // "Cheat" by pretending that 0-flowrate valves are already on to reduce options
-  network.forEach((_, name: string) =>
-    active.set(name, network.get(name).flowRate == 0)
+function mapShortestDistances(network: Map<string, Valve>): DistanceMap {
+  const distances = new Map<string, Map<string, number>>();
+  network.forEach((_, from) =>
+    distances.set(from, new Map<string, number>([[from, 0]]))
   );
-  const knownStates = [];
-  const benchmarks = new Map<number, Benchmark>();
-  return pressureReleaseHelperA(network, active, "AA", minutes, 0, knownStates);
-}
-
-function pressureReleaseHelperA(
-  network: Map<string, Valve>,
-  active: Map<string, boolean>,
-  at: string,
-  minutes: number,
-  released: number,
-  knownStates: string[]
-): number {
-  if (minutes <= 1) {
-    return 0;
-  }
-  if (minutes >= 28) {
-    console.log(at, minutes);
-  }
-  if (allEqual(true, active.values())) {
-    return 0;
-  }
-  const currentState = serializeState(
-    active,
-    at,
-    minutes,
-    released,
-    maxReleasablePressure(network, active, minutes)
-  );
-  const betterState = knownStates.find((ks) =>
-    isEqualOrWorse(currentState, ks)
-  );
-  if (betterState) {
-    return 0;
-  }
-  knownStates.push(currentState);
-
-  const bestNoTurnMove = max(
-    network
-      .get(at)
-      .tunnels.map((name) =>
-        pressureReleaseHelperA(
-          network,
-          active,
-          name,
-          minutes - 1,
-          released,
-          knownStates
-        )
-      )
-  );
-  if (active.get(at) || minutes == 1 || network.get(at).flowRate <= 0) {
-    // Current valve is already on, or no time to turn it
-    return bestNoTurnMove;
-  } else {
-    const flowGain = network.get(at).flowRate * (minutes - 1);
-    const newActive = new Map<string, boolean>(active);
-    newActive.set(at, true);
-    const bestPostTurnMove =
-      flowGain +
-      max(
-        network
-          .get(at)
-          .tunnels.map((name) =>
-            pressureReleaseHelperA(
-              network,
-              newActive,
-              name,
-              minutes - 2,
-              released + flowGain,
-              knownStates
-            )
-          )
-      );
-    return Math.max(bestNoTurnMove, bestPostTurnMove);
-  }
-}
-
-function pressureReleaseHelperB(
-  network: Map<string, Valve>,
-  active: Map<string, boolean>,
-  at1: string,
-  at2: string,
-  minutes: number,
-  released: number,
-  knownStates: string[]
-): number {
-  if (minutes <= 1) {
-    return 0;
-  }
-  if (minutes >= 28) {
-    console.log(at1, at2, minutes);
-  }
-  if (allEqual(true, active.values())) {
-    return 0;
-  }
-  const currentState = serializeState(
-    active,
-    at1,
-    at2,
-    minutes,
-    released,
-    maxReleasablePressure(network, active, minutes)
-  );
-  // const currentState = serializeStateB(
-  //   released,
-  //   maxReleasablePressure(network, active, minutes)
-  // );
-  const betterState = knownStates.find((ks) =>
-    isEqualOrWorse(currentState, ks)
-  );
-  if (betterState) {
-    return 0;
-  }
-  knownStates.push(currentState);
-
-  const bestNoTurnMove = max(
-    network
-      .get(at)
-      .tunnels.map((name) =>
-        pressureReleaseHelperA(
-          network,
-          active,
-          name,
-          minutes - 1,
-          released,
-          knownStates
-        )
-      )
-  );
-  if (active.get(at) || minutes == 1 || network.get(at).flowRate <= 0) {
-    // Current valve is already on, or no time to turn it
-    return bestNoTurnMove;
-  } else {
-    const flowGain = network.get(at).flowRate * (minutes - 1);
-    const newActive = new Map<string, boolean>(active);
-    newActive.set(at, true);
-    const bestPostTurnMove =
-      flowGain +
-      max(
-        network
-          .get(at)
-          .tunnels.map((name) =>
-            pressureReleaseHelperA(
-              network,
-              newActive,
-              name,
-              minutes - 2,
-              released + flowGain,
-              knownStates
-            )
-          )
-      );
-    return Math.max(bestNoTurnMove, bestPostTurnMove);
-  }
-}
-
-function allEqual<T>(target: T, list: IterableIterator<T>) {
-  for (const val of list) {
-    if (list != target) {
-      return false;
+  for (let i = 0; i < network.size; i++) {
+    let changed = false;
+    network.forEach((_, from) => {
+      const valveDistances = distances.get(from);
+      valveDistances.forEach((distance, intermediate) => {
+        if (distance == i) {
+          const intermediateValve = network.get(intermediate);
+          intermediateValve.tunnels.forEach((connected) => {
+            if (!valveDistances.has(connected)) {
+              valveDistances.set(connected, 1 + distance);
+              changed = true;
+            }
+          });
+        }
+      });
+    });
+    if (!changed) {
+      break;
     }
   }
-  return true;
-}
-
-function serializeState(
-  active: Map<string, boolean>,
-  at: string,
-  minute: number,
-  released: number,
-  maxRemainingFlowRate: number
-) {
-  const state = [];
-  active.forEach((value: boolean, name: string) => state.push(value ? 1 : 0));
-  return (
-    at +
-    String(minute).padStart(2, "0") +
-    String(released).padStart(16, "0") +
-    String(maxRemainingFlowRate).padStart(16, "0") +
-    state.join("")
-  );
-}
-function serializeState2(
-  active: Map<string, boolean>,
-  at1: string,
-  at2: string,
-  minute: number,
-  released: number,
-  maxRemainingFlowRate: number
-) {
-  const state = [];
-  active.forEach((value: boolean, name: string) => state.push(value ? 1 : 0));
-  return (
-    at1 +
-    at2 +
-    String(minute).padStart(2, "0") +
-    String(released).padStart(16, "0") +
-    String(maxRemainingFlowRate).padStart(16, "0") +
-    state.join("")
-  );
-}
-
-function serializeStateB(released: number, maxReleasable: number) {
-  return (
-    String(released).padStart(16, "0") + String(maxReleasable).padStart(16, "0")
-  );
-}
-
-/**
- * Returns true if A is worse (or equal) than B is every way
- * - Same position
- * - Less time
- * - Fewer valves turned
- * @param a
- * @param b
- * @returns
- */
-function isEqualOrWorse(a: string, b: string) {
-  const minutesA = Number(a.substring(2, 4));
-  const minutesB = Number(b.substring(2, 4));
-  const releasedA = Number(a.substring(4, 20));
-  const releasedB = Number(b.substring(4, 20));
-  const remainingA = Number(a.substring(20, 36));
-  const remainingB = Number(b.substring(20, 36));
-  // 4 is an estimated discount rate. Higher number for more accurate but slower solution.
-  if (remainingA + releasedA < releasedB) {
-    // There's no way A can catch up
-    return true;
-  }
-  const atA = a.substring(0, 2);
-  const atB = b.substring(0, 2);
-  if (atA != atB) {
-    return false;
-  }
-  if (minutesA > minutesB) {
-    return false;
-  }
-  for (let i = 36; i < a.length; i++) {
-    if (a.charAt(i) == "1" && b.charAt(i) == "0") {
-      return false;
-    }
-  }
-  return true;
-}
-function isEqualOrWorseB(a: string, b: string) {
-  const releasedA = Number(a.substring(0, 16));
-  const releasedB = Number(b.substring(0, 16));
-  const remainingA = Number(a.substring(16, 32));
-  const remainingB = Number(b.substring(16, 32));
-  // 4 is an estimated discount rate. Higher number for more accurate but slower solution.
-  return remainingA + releasedA < releasedB + remainingB / 4;
-}
-function isEqualOrWorse2(a: string, b: string) {
-  const minutesA = Number(a.substring(4, 6));
-  const minutesB = Number(b.substring(4, 6));
-  const releasedA = Number(a.substring(6, 22));
-  const releasedB = Number(b.substring(6, 22));
-  const remainingA = Number(a.substring(22, 38));
-  const remainingB = Number(b.substring(22, 38));
-  // 4 is an estimated discount rate. Higher number for more accurate but slower solution.
-  if (remainingA + releasedA < releasedB) {
-    // There's no way A can catch up
-    return true;
-  }
-  const atA1 = a.substring(0, 2);
-  const atA2 = a.substring(2, 4);
-  const atB1 = b.substring(0, 2);
-  const atB2 = b.substring(2, 4);
-  if (!((atA1 == atB1 && atA2 == atB2) || (atA1 == atB2 && atA2 == atB1))) {
-    return false;
-  }
-  if (minutesA > minutesB) {
-    return false;
-  }
-  for (let i = 36; i < a.length; i++) {
-    if (a.charAt(i) == "1" && b.charAt(i) == "0") {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * The highest pressure that can theoretically be released from a point in time
- */
-function maxReleasablePressure(
-  network: Map<string, Valve>,
-  active: Map<string, boolean>,
-  minutes: number
-) {
-  let availableFlow = [];
-  network.forEach((valve, name) => {
-    if (!active.get(name)) {
-      availableFlow.push(valve.flowRate);
-    }
-  });
-  availableFlow.sort((a, b) => b - a);
-  let gained = 0;
-  for (let i = minutes - 1; i > 0 && availableFlow.length > 0; i -= 2) {
-    gained += i * availableFlow.shift();
-  }
-  return gained;
+  return distances;
 }
